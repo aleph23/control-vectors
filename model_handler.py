@@ -17,18 +17,19 @@ class ModelHandler:
             raise FileNotFoundError(f"Configuration file not found at {config_path}")
         with open(config_path, 'r') as f:
             config = json.load(f)
-            
+
         # Determine if the model is Gemma2ForCausalLM
         # NOTE: The Gemma2 models need attn_implementation="eager" and doesn't like float16 due to the +/- 2^16 range.
         #       https://old.reddit.com/r/LocalLLaMA/comments/1dsvpp2/thread_on_running_gemma_2_correctly_with_hf/
+        # Determine if the model is Gemma2ForCausalLM or Gemma3ForCausalLM
         isGemma2 = (config.get("architectures", [])[0] == "Gemma2ForCausalLM")
-        if isGemma2:
-            print("*** Gemma2ForCausalLM: Using torch_dtype = bfloat16 and attn_implementation = 'eager' ***")
-                
+        isGemma3 = (config.get("architectures", [])[0] == "Gemma3ForCausalLM" or
+                  "gemma3" in config.get("model_type", "").lower())
+
         # Use float16 and 4-bit for 'cuda'.
         if device == "cuda":
-            # Adjust dtype for Gemma2.
-            self.torch_dtype = torch.bfloat16 if isGemma2 else torch.float16
+            # Adjust dtype for Gemma2/Gemma3
+            self.torch_dtype = torch.bfloat16 if (isGemma2 or isGemma3) else torch.float16
             self.quantization_config = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype=self.torch_dtype)
 
         # Use the model's actual float type for 'cpu'.
@@ -47,7 +48,7 @@ class ModelHandler:
             quantization_config = self.quantization_config,
             device_map = 'auto' if device == "cuda" else 'cpu',
             # Adjust attn_implementation for Gemma2.
-            attn_implementation=None if device != "cuda" else ("eager" if isGemma2 else "flash_attention_2"),
+            attn_implementation=None if device != "cuda" else ("eager" if (isGemma2 or isGemma3) else "flash_attention_2"),
             trust_remote_code=True,
             low_cpu_mem_usage = True,
         )
@@ -109,9 +110,9 @@ class ModelHandler:
         hidden_dimension = next((tensor.shape[1] for tensor in directions if tensor is not None), None)
         if hidden_dimension is None:
             raise ValueError("All tensors are None or no tensor has a second dimension.")
-        
+
         print(f"Hidden dimension size across tensors: {hidden_dimension}")
-        
+
         ### @@@ NOTE: Padded with zero tensors to work around llama.cpp code @@@ ###
         for layer, tensor in enumerate(directions):
             """
@@ -126,7 +127,7 @@ class ModelHandler:
                     print(f"--- Combined vectors for layer {layer + 1} into shape: {combined_tensor.shape}")
                 else:
                     combined_tensor = tensor[0]
-        
+
             writer.add_tensor(f"direction.{layer + 1}", combined_tensor.flatten().numpy())
             """
             if tensor is not None:
@@ -136,8 +137,8 @@ class ModelHandler:
                     print(f"--- Combined vectors for layer {layer + 1} into shape: {combined_tensor.shape}")
                 else:
                     combined_tensor = tensor[0]
-                writer.add_tensor(f"direction.{layer + 1}", combined_tensor.flatten().numpy())            
-                
+                writer.add_tensor(f"direction.{layer + 1}", combined_tensor.flatten().numpy())
+
         writer.write_header_to_file()
         writer.write_kv_data_to_file()
         writer.write_tensors_to_file()
@@ -149,3 +150,4 @@ class ModelHandler:
     def delete(self):
         del self.model
         del self.tokenizer
+
