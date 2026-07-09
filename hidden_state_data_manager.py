@@ -172,14 +172,17 @@ class HiddenStateDataManager:
         
         for tokens in tokens_batch:
             seq_len = tokens.size(1)
-            padding_length = max_length - seq_len
             padded = torch.full((1, max_length), pad_token_id, dtype=tokens.dtype, device=device)
-            padded[:, padding_length:] = tokens.to(device)
-            padded_tokens.append(padded)
+            # right-padding: place the sequence at the start, pad on the right
+            padded[:, :seq_len] = tokens
+
+            # attention mask: 1 for real tokens, 0 for padding
             mask = torch.zeros((1, max_length), dtype=torch.long, device=device)
-            mask[:, padding_length:] = 1
+            mask[:, :seq_len] = 1
+
+            padded_tokens.append(padded)
             attention_masks.append(mask)
-        
+     
         batch_tokens = torch.cat(padded_tokens, dim=0)
         batch_attention_mask = torch.cat(attention_masks, dim=0)
         
