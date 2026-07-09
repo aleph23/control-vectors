@@ -26,12 +26,15 @@ def main(
     use_separate_system_message,
     skip_begin_layers,
     skip_end_layers,
-    discriminant_ratio_tolerance
+    discriminant_ratio_tolerance,
+    batch_size,
+    use_bfloat16,
+    quantization
 ):
     signal.signal(signal.SIGINT, signal_handler)
 
     torch.inference_mode()
-    torch.set_default_device("cpu")
+    torch.set_default_device("cuda")
     torch.set_grad_enabled(False)
 
     # Updated DatasetManager instantiation
@@ -46,7 +49,10 @@ def main(
         dataset_manager,
         model_id,
         output_path,
-        use_separate_system_message
+        use_separate_system_message,
+        batch_size,
+        use_bfloat16,
+        quantization
     )
 
     direction_analyzer = DirectionAnalyzer(
@@ -64,7 +70,9 @@ def main(
             free_memory()
             model_handler = ModelHandler(
                 model_id,
-                device = "cpu"
+                device = "cuda",
+                use_bfloat16 = use_bfloat16,
+                quantization = "none"  # No quantization for export
             )
             
             if i == 0:
@@ -87,6 +95,10 @@ if __name__ == "__main__":
     parser.add_argument("--skip_begin_layers", type = int, default = 0, help = "The number (or fraction) of initial layers to skip.")
     parser.add_argument("--skip_end_layers", type = int, default = 1, help = "The number (or fraction) of end layers to skip.")
     parser.add_argument("--discriminant_ratio_tolerance", type = float, default = 0.5, help = "Used to filter low signal \"noise\" directions (0 = none).")
+    parser.add_argument("--batch_size", type=int, default=1, help="Batch size for hidden state generation (1 = no batching).")
+    parser.add_argument("--use_bfloat16", action="store_false", default=True, help="Use bfloat16 instead of float16 (default: True).")
+    parser.add_argument("--quantization", type=str, choices=["4bit", "8bit", "none"], default="none", help="Quantization level for model loading (default: 4bit)")
+
     args = parser.parse_args()
     main(
         args.model_id,
@@ -98,5 +110,8 @@ if __name__ == "__main__":
         args.use_separate_system_message,
         args.skip_begin_layers,
         args.skip_end_layers,
-        args.discriminant_ratio_tolerance
+        args.discriminant_ratio_tolerance,
+        args.batch_size,
+        args.use_bfloat16,
+        args.quantization
     )
