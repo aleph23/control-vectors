@@ -115,36 +115,25 @@ class HiddenStateDataManager:
     def _generate_hidden_state_samples(self, dataset_tokens: List[List[torch.Tensor]]) -> None:
         try:
             num_samples = sum(len(tokens) for tokens in dataset_tokens)
-            with tqdm(total = num_samples, desc = "Sampling hidden states") as bar:
+            with tqdm(total=num_samples, desc="Sampling hidden states") as bar:
                 for token_list in dataset_tokens:
                     hidden_states = []
-                    
+
                     if self.batch_size <= 1:
                         for tokens in token_list:
                             hidden_states.append(self._generate(tokens))
-                            bar.update(n = 1)
+                            bar.update(n=1)
                     else:
-                        sorted_indices = sorted(range(len(token_list)), key=lambda i: token_list[i].size(1))
-                        sorted_tokens = [token_list[i] for i in sorted_indices]
-                        
-                        for i in range(0, len(sorted_tokens), self.batch_size):
-                            batch_tokens = sorted_tokens[i:i+self.batch_size]
-                            
+                        # process in batches in original order
+                        for i in range(0, len(token_list), self.batch_size):
+                            batch_tokens = token_list[i:i + self.batch_size]
                             try:
                                 batch_hidden_states = self._generate_batch(batch_tokens)
                                 hidden_states.extend(batch_hidden_states)
-                                bar.update(n = len(batch_tokens))
+                                bar.update(n=len(batch_tokens))
                             except Exception as e:
                                 raise RuntimeError(f"Error processing batch: {e}")
-                    
-                    # restore original order of samples
-                    if self.batch_size > 1:
-                        unsort_mapping = {idx: original_idx for original_idx, idx in enumerate(sorted_indices)}
-                        ordered_hidden_states = [None] * len(hidden_states)
-                        for i, hs in enumerate(hidden_states):
-                            ordered_hidden_states[unsort_mapping[i]] = hs
-                        hidden_states = ordered_hidden_states
-                    
+
                     self.dataset_hidden_states.append(hidden_states)
         except Exception as e:
             print(f"Error generating hidden states: {e}")
