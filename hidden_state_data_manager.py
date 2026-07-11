@@ -16,10 +16,16 @@ class HiddenStateDataManager:
         dataset_manager: DatasetManager,
         pretrained_model_name_or_path: Union[str, os.PathLike],
         output_path: str,
-        use_separate_system_message: bool
+        use_separate_system_message: bool,
+        batch_size: int = 1,
+        use_bfloat161.0: bool = True,
+        quantization: str = "4bit"
     ):
         self.model_handler = None
         self.dataset_hidden_states = []
+        self.batch_size = batch_size
+        self.use_bfloat16 = use_bfloat16
+        self.quantization = quantization
 
         filename = output_path + "_hidden_state_samples.pt"
         if os.path.exists(filename):
@@ -69,7 +75,12 @@ class HiddenStateDataManager:
 
     def _load_model(self, pretrained_model_name_or_path: Union[str, os.PathLike]):
         try:
-            self.model_handler = ModelHandler(pretrained_model_name_or_path, device = "cuda")
+            self.model_handler = ModelHandler(
+                    pretrained_model_name_or_path, 
+                    device = "cuda", 
+                    use_bfloat16 = self.use_bfloat16, 
+                    quantization = self.quantization
+                )
         except Exception as e:
             print(f"Error loading model: {e}")
 
@@ -104,12 +115,25 @@ class HiddenStateDataManager:
     def _generate_hidden_state_samples(self, dataset_tokens: List[List[torch.Tensor]]) -> None:
         try:
             num_samples = sum(len(tokens) for tokens in dataset_tokens)
-            with tqdm(total = num_samples, desc = "Sampling hidden states") as bar:
+            with tqdm(total=num_samples, desc="Sampling hidden states") as bar:
                 for token_list in dataset_tokens:
                     hidden_states = []
-                    for tokens in token_list:
-                        hidden_states.append(self._generate(tokens))
-                        bar.update(n = 1)
+
+                    if self.batch_size <= 1:
+                        for tokens in token_list:
+                            hidden_states.append(self._generate(tokens))
+                            bar.update(n=1)
+                    else:
+                        # process in batches in original order
+                        for i in range(0, len(token_list), self.batch_size):
+                            batch_tokens = token_list[i:i + self.batch_size]
+                            try:
+                                batch_hidden_states = self._generate_batch(batch_tokens)
+                                hidden_states.extend(batch_hidden_states)
+                                bar.update(n=len(batch_tokens))
+                            except Exception as e:
+                                raise RuntimeError(f"Error processing batch: {e}")
+
                     self.dataset_hidden_states.append(hidden_states)
         except Exception as e:
             print(f"Error generating hidden states: {e}")
@@ -131,3 +155,43 @@ class HiddenStateDataManager:
                   range(1, len(hidden_states_by_layer))]
         return deltas
 
+    def _generate_batch(self, tokens_batch: List[torch.Tensor]) -> List[List[torch.Tensor]]:
+        max_length = max(tokens.size(1) for tokens in tokens_batch)
+        padded_tokens = []
+        attention_masks = []
+        pad_token_id = self.model_handler.tokenizer.pad_token_id if self.model_handler.tokenizer.pad_token_id is not None else self.model_handler.tokenizer.eos_token_id
+        device = self.model_handler.model.device
+        
+        for tokens in tokens_batch:
+            seq_len = tokens.size(1)
+            padded = torch.full((1, max_length), pad_token_id, dtype=tokens.dtype, device=device)
+            # right-padding: place the sequence at the start, pad on the right
+            padded[:, :seq_len] = tokens
+
+            # attention mask: 1 for real tokens, 0 for padding
+            mask = torch.zeros((1, max_length), dtype=torch.long, device=device)
+            mask[:, :seq_len] = 1
+
+            padded_tokens.append(padded)
+            attention_masks.append(mask)
+     
+        batch_tokens = torch.cat(padded_tokens, dim=0)
+        batch_attention_mask = torch.cat(attention_masks, dim=0)
+        
+        output = self.model_handler.model.generate(
+            batch_tokens,
+            use_cache = False,
+            max_new_tokens = 1,
+            return_dict_in_generate = True,
+            output_hidden_states = True,
+            attention_mask = batch_attention_mask,
+            pad_token_id = pad_token_id
+        )
+        
+        batch_deltas = []                
+        for i in range(len(tokens_batch)):
+            hidden_states_by_layer = [hidden_state[i, -1, :].squeeze().to('cpu') for hidden_state in output.hidden_states[-1][:]]
+            deltas = [hidden_states_by_layer[j] - hidden_states_by_layer[j - 1] for j in range(1, len(hidden_states_by_layer))]
+            batch_deltas.append(deltas)
+        
+        return batch_deltas
