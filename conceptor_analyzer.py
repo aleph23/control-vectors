@@ -35,10 +35,9 @@ def compute_conceptor(X, aperture):
     - torch.Tensor: Conceptor matrix of shape (n_features, n_features).
     """
     R = torch.matmul(X.T, X) / X.shape[0]
-    U, S, _ = torch.svd(R)
-    C = U * (S / (S + (aperture ** (-2)) * torch.ones(S.shape, device=X.device))) @ U.T
+    eigenvalues, eigenvectors = torch.linalg.eigh(R)
+    C = eigenvectors * (eigenvalues / (eigenvalues + (aperture ** (-2)) * torch.ones(eigenvalues.shape, device=X.device))) @ eigenvectors.T
     return C
-
 
 def combine_conceptors_and(C1: torch.Tensor, C2: torch.Tensor) -> torch.Tensor:
     """
