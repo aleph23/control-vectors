@@ -34,25 +34,31 @@ fi
 
 # Define arrays for continuations and output suffixes
 continuations=(
-    "$DATA/writing_style_continuations/character_focus.json"
-    "$DATA/writing_style_continuations/language.json"
-    "$DATA/writing_style_continuations/storytelling.json"
+    # "$DATA/writing_style_continuations/character_focus.json"
+    # "$DATA/writing_style_continuations/language.json"
+    # "$DATA/writing_style_continuations/storytelling.json"
     "$DATA/dark_tetrad_continuations/compassion_vs_sadism.json"
     "$DATA/dark_tetrad_continuations/empathy_vs_sociopathy.json"
     "$DATA/dark_tetrad_continuations/honesty_vs_machiavellianism.json"
     "$DATA/dark_tetrad_continuations/humility_vs_narcissism.json"
     "$DATA/other_continuations/optimism_vs_nihilism.json"
+    # "$DATA/other_continuations/vanilla_vs_deviant.json"
+    # "$DATA/other_continuations/fantasy_vs_realistic.json"
+    "$DATA/other_continuations/extreme_vs_tame.json"
 )
 
 output_suffixes=(
-    "character_focus_"
-    "language_"
-    "storytelling_"
+    # "character_focus_"
+    # "language_"
+    # "storytelling_"
     "compassion_vs_sadism_"
     "empathy_vs_sociopathy_"
     "honesty_vs_machiavellianism_"
     "humility_vs_narcissism_"
     "optimism_vs_nihilism_"
+    # "vanilla_vs_deviant_"
+    # "fantasy_vs_realistic_"
+    "extreme_vs_tame_"
 )
 
 # Set CUDA_VISIBLE_DEVICES
