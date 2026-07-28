@@ -5,7 +5,14 @@ import logging
 from typing import Union, Optional, List
 from hidden_state_data_manager import HiddenStateDataManager
 from tqdm import tqdm
+from dataclasses import dataclass
 
+@dataclass
+class ConceptorRepresentation:
+    is_low_rank: bool
+    full: Optional[torch.Tensor] = None
+    U: Optional[torch.Tensor] = None
+    s: Optional[torch.Tensor] = None
 
 def scale_conceptor(C: torch.Tensor, aperture_scaling_factor: float) -> torch.Tensor:
     """
@@ -197,7 +204,7 @@ class ConceptorAnalyzer:
     def __init__(
             self,
             hidden_state_data_manager: "HiddenStateDataManager",
-            skip_begin_layers: Union[int, float] = 0,
+            skip_begin_layers: Union[int, float] = 1,
             skip_end_layers: Union[int, float] = 1,
             aperture: float = 0.1,
             center_mode: str = "none",
@@ -265,111 +272,80 @@ class ConceptorAnalyzer:
             self.variance_threshold = None
             self.threshold = None
 
-        self.conceptors: List[List[Optional[torch.Tensor]]] = []
+        self.conceptors: List[List[Optional[ConceptorRepresentation]]] = ...
         self.means: List[List[Optional[torch.Tensor]]] = []
-
         self._compute_conceptors_all()
 
+    def _compute_baseline_means(self) -> List[Optional[torch.Tensor]]:
+        baseline_means_by_layer = [None] * self.num_layers
+
+        if self.center_mode == "baseline" and self.num_dataset_types > 0:
+            for layer_idx in range(self.skip_begin_layers, self.num_layers - self.skip_end_layers):
+                X_base = self.hidden_state_data_manager.get_datasets(layer_idx)[0]
+                X_base = X_base.float().cpu()
+                baseline_means_by_layer[layer_idx] = X_base.mean(dim=0, keepdim=True)
+        return baseline_means_by_layer
+
+    def _center_X(
+        self,
+        X: torch.Tensor,
+        class_idx: int,
+        layer_idx: int,
+        baseline_means_by_layer: List[Optional[torch.Tensor]],
+        ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
+
+        if self.center_mode == "none":
+            return X, None
+        if self.center_mode == "local":
+            mean_vec = X.mean(dim=0, keepdim=True)
+            return X - mean_vec, mean_vec
+        if self.center_mode == "baseline":
+            if class_idx == 0:
+                return X, None
+            mean_vec = baseline_means_by_layer[layer_idx]
+            return X - mean_vec, mean_vec
+        raise ValueError(f"Unknown center_mode {self.center_mode}")    
+        
+    def _compute_conceptor_for_X(self, X: torch.Tensor) -> ConceptorRepresentation:
+        if self.low_rank_approximation:
+            # same low-rank logic as above...
+            return ConceptorRepresentation(is_low_rank=True, U=U_k.cpu(), s=s_k.cpu())
+        else:
+            C = compute_conceptor(X, self.aperture)
+            return ConceptorRepresentation(is_low_rank=False, full=C.cpu())
+            
     def _compute_conceptors_all(self):
-        """
-        Iterates over dataset classes and layers to compute conceptors.
-
-        If center_mode='local', we subtract each dataset's own mean.
-        If center_mode='baseline', we subtract the baseline's mean for classes>0.
-        If center_mode='none', no mean is subtracted.
-        """
-
-        # Initialize output structures
         self.conceptors = [[None for _ in range(self.num_layers)]
                            for _ in range(self.num_dataset_types)]
         self.means = [[None for _ in range(self.num_layers)]
                       for _ in range(self.num_dataset_types)]
-
-        # Prepass for 'baseline' mode...
-        baseline_means_by_layer = [None] * self.num_layers
-        if self.center_mode == "baseline" and self.num_dataset_types > 0:
-            print("Computing baseline means...")
-            for layer_idx in range(self.skip_begin_layers, self.num_layers - self.skip_end_layers):
-                X_base = self.hidden_state_data_manager.get_datasets(layer_idx)[0]  # baseline is class_idx=0
-                X_base = X_base.float().cpu()
-                baseline_means_by_layer[layer_idx] = X_base.mean(dim=0, keepdim=True)  # shape (1, d)
-
+    
+        baseline_means_by_layer = self._compute_baseline_means()
+    
         total_computations = (self.num_layers - self.skip_begin_layers - self.skip_end_layers) * self.num_dataset_types
-
-        computation_counter = 0
         with tqdm(total=total_computations, desc="Computing conceptors") as pbar:
             for class_idx in range(self.num_dataset_types):
-                print(f"\nProcessing class {class_idx + 1}/{self.num_dataset_types}:")
                 for layer_idx in range(self.skip_begin_layers, self.num_layers - self.skip_end_layers):
-                    print(f"- Layer {layer_idx + 1}/{self.num_layers}: ", end="")
-
                     X = self.hidden_state_data_manager.get_datasets(layer_idx)[class_idx]
                     X = X.float().cpu()
-                    N_samples = X.shape[0]
-                    print(f"{N_samples} samples", end="")
-
-                    # Mean-Centering
-                    if self.center_mode == "none":
-                        mean_vec = None
-                    elif self.center_mode == "local":
-                        mean_vec = X.mean(dim=0, keepdim=True)
-                        X = X - mean_vec
-                    elif self.center_mode == "baseline":
-                        # Don't shift if this is the baseline class...
-                        if class_idx == 0:
-                            mean_vec = None
-                        else:
-                            mean_vec = baseline_means_by_layer[layer_idx]
-                            X = X - mean_vec
-                    else:
-                        raise ValueError(f"Unknown center_mode {self.center_mode}")
-
+    
+                    X_centered, mean_vec = self._center_X(X, class_idx, layer_idx, baseline_means_by_layer)
+    
                     try:
-                        if self.low_rank_approximation:
-                            if self.low_rank_method == "manual":
-                                U_k, s_k = compute_conceptor_low_rank(X, self.aperture, rank=self.rank)
-                            elif self.low_rank_method == "automatic":
-                                U_k, s_k = compute_low_rank_conceptor_automatic(X, self.aperture, variance_threshold=self.variance_threshold)
-                            elif self.low_rank_method == "optimal":
-                                C_full = compute_conceptor(X, self.aperture)
-                                U_k, s_k = compute_optimal_low_rank_conceptor(C_full, threshold=self.threshold)
-                            else:
-                                raise ValueError(f"Unknown low_rank_method {self.low_rank_method}")
-
-                            # Store low-rank components
-                            self.conceptors[class_idx][layer_idx] = (U_k.cpu(), s_k.cpu())
-
-                            rank_k = U_k.shape[1]
-                            print(f"[rank: {rank_k}/{X.shape[1]}] ", end="")
-                            print(f"[var: {(s_k.sum() / X.shape[1] * 100):.1f}%] ", end="")
-                            print(f"[λ: ({s_k.min():.3f}, {s_k.max():.3f})]", end="")
-                        else:
-                            C = compute_conceptor(X, self.aperture)
-                            self.conceptors[class_idx][layer_idx] = C.cpu()
-                            print(" [Full Matrix]", end="")
-                            print(f"[trace: {torch.trace(C).item():.2f}] ", end="")
-                            # print(f"[λ: ({eigenvals.min():.3f}, {eigenvals.max():.3f})]", end="")
-
-                        print("")
-
+                        conceptor_repr = self._compute_conceptor_for_X(X_centered)
+                        self.conceptors[class_idx][layer_idx] = conceptor_repr
                     except RuntimeError as e:
                         logging.error(f"Error computing conceptor at layer={layer_idx} class={class_idx}: {e}")
-                        print(" [Computation Error]")
-
+    
                     if mean_vec is not None:
                         self.means[class_idx][layer_idx] = mean_vec.squeeze(0).cpu()
-
-                    computation_counter += 1
+    
                     pbar.update(1)
-
+                    
     def get_conceptor(self, class_idx: int, layer_idx: int) -> Optional[torch.Tensor]:
-        """
-        Returns the conceptor for the given class/layer, or None if not computed.
-        """
+        """Returns the conceptor for the given class/layer, or None if not computed."""
         return self.conceptors[class_idx][layer_idx]
 
     def get_mean(self, class_idx: int, layer_idx: int) -> Optional[torch.Tensor]:
-        """
-        Returns the (d,)-shaped mean vector used for that (class,layer), or None if none was used.
-        """
+        """Returns the (d,)-shaped mean vector used for that (class,layer), or None if none was used."""
         return self.means[class_idx][layer_idx]
