@@ -18,7 +18,7 @@ class HiddenStateDataManager:
         output_path: str,
         use_separate_system_message: bool,
         batch_size: int = 1,
-        use_bfloat161.0: bool = True,
+        use_bfloat16: bool = True,
         quantization: str = "4bit"
     ):
         self.model_handler = None
