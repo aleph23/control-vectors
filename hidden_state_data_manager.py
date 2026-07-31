@@ -18,14 +18,12 @@ class HiddenStateDataManager:
         output_path: str,
         use_separate_system_message: bool,
         batch_size: int = 1,
-        use_bfloat16: bool = True,
-        quantization: str = "4bit"
+        precision: str = "4bit"
     ):
         self.model_handler = None
         self.dataset_hidden_states = []
         self.batch_size = batch_size
-        self.use_bfloat16 = use_bfloat16
-        self.quantization = quantization
+        self.precision = precision
 
         filename = output_path + "_hidden_state_samples.pt"
         if os.path.exists(filename):
@@ -78,8 +76,7 @@ class HiddenStateDataManager:
             self.model_handler = ModelHandler(
                     pretrained_model_name_or_path, 
                     device = "cuda", 
-                    use_bfloat16 = self.use_bfloat16, 
-                    quantization = self.quantization
+                    precision = self.precision
                 )
         except Exception as e:
             print(f"Error loading model: {e}")

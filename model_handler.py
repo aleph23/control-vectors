@@ -9,11 +9,10 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 class ModelHandler:
 
     def __init__(
-            self, 
-            pretrained_model_name_or_path: Union[str, os.PathLike], 
-            device = "cuda", 
-            use_bfloat16=False,
-            quantization: Literal["4bit", "8bit", "none"] = "none"
+            self,
+            pretrained_model_name_or_path: Union[str, os.PathLike],
+            device = "cuda",
+            precision: Literal["bfloat16", "4bit", "8bit", "orig"] = "orig"
             ):
         self.device = device
 
@@ -24,91 +23,60 @@ class ModelHandler:
         with open(config_path, 'r') as f:
             config = json.load(f)
 
-        # Determine if the model is Gemma2ForCausalLM
-        # NOTE: The Gemma2 models need attn_implementation="eager" and doesn't like float16 due to the +/- 2^16 range.
+        # Determine if the model is Gemma3ForCausalLM.
+        # NOTE: The Gemma3 models need attn_implementation="eager" and don't like float16 due to the +/- 2^16 range.
         #       https://old.reddit.com/r/LocalLLaMA/comments/1dsvpp2/thread_on_running_gemma_2_correctly_with_hf/
-        isGemma2 = (config.get("architectures", [])[0] == "Gemma2ForCausalLM")
-        if isGemma2:
-            print("*** Gemma2ForCausalLM: Using torch_dtype = bfloat16 and attn_implementation = 'eager' ***")
+        isGemma3 = (config.get("architectures", [])[0] == "Gemma3ForCausalLM" or "gemma3" in config.get("model_type", "").lower())
 
-        # Use float16 and 4-bit for 'cuda'.
-        if device == "cuda":
-            # Adjust dtype for Gemma2.
-            self.torch_dtype = torch.bfloat16 if isGemma2 else torch.float16
-            self.quantization_config = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype=self.torch_dtype)
-
-        # Use the model's actual float type for 'cpu'.
-        elif device == "cpu":
+        # 'orig' honors the model's own dtype (per config.json); 'bfloat16'/'4bit'/'8bit' all compute in bfloat16.
+        if precision == "orig":
             if "torch_dtype" not in config:
                 raise KeyError("The 'torch_dtype' key is missing in the configuration file")
             self.torch_dtype = getattr(torch, config["torch_dtype"])
-            self.quantization_config = None
         else:
+            self.torch_dtype = torch.bfloat16
+
+        if isGemma3 and self.torch_dtype == torch.float16:
+            print("*** Gemma3ForCausalLM: overriding torch_dtype = bfloat16 (float16 is unsupported) and attn_implementation = 'eager' ***")
+            self.torch_dtype = torch.bfloat16
+        elif isGemma3:
+            print("*** Gemma3ForCausalLM: using attn_implementation = 'eager' ***")
+
+        print(f"Using torch_dtype = {self.torch_dtype}")
+
+        # Quantization is only supported on 'cuda'.
+        if precision in ("4bit", "8bit"):
+            if device != "cuda":
+                raise RuntimeError(f"Quantization ('{precision}') requires device='cuda', got '{device}'")
+            if precision == "4bit":
+                print("Using 4-bit quantization")
+                self.quantization_config = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_compute_dtype=self.torch_dtype
+                )
+            else:
+                print("Using 8-bit quantization")
+                self.quantization_config = BitsAndBytesConfig(load_in_8bit=True)
+        else:
+            print("Using no quantization")
+            self.quantization_config = None
+
+        if device not in ("cuda", "cpu"):
             raise RuntimeError(f"The device must be 'cpu' or 'cuda': {device}")
 
-        self.torch_dtype = getattr(torch, config["torch_dtype"])
-                self.quantization_config = None
-            else:
-                raise RuntimeError(f"The device must be 'cpu' or 'cuda': {device}")
-  
         print(f"Loading '{pretrained_model_name_or_path}' model and tokenizer...")
         self.model = AutoModelForCausalLM.from_pretrained(
             pretrained_model_name_or_path,
             torch_dtype = self.torch_dtype,
             quantization_config = self.quantization_config,
             device_map = 'auto' if device == "cuda" else 'cpu',
-            # Adjust attn_implementation for Gemma2.
-            attn_implementation=None if device != "cuda" else ("eager" if (isGemma2 or isGemma3) else "flash_attention_2"),
+            # Adjust attn_implementation for Gemma3.
+            attn_implementation=None if device != "cuda" else ("eager" if isGemma3 else "flash_attention_2"),
             trust_remote_code=True,
             low_cpu_mem_usage = True,
         )
         self.model.requires_grad_(False)
         self.tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path, trust_remote_code=True)
-
-        # Determine if the model is Gemma2ForCausalLM
-        # NOTE: The Gemma2 models need attn_implementation="eager" and doesn't like float16 due to the +/- 2^16 range.
-        #       https://old.reddit.com/r/LocalLLaMA/comments/1dsvpp2/thread_on_running_gemma_2_correctly_with_hf/
-        # Determine if the model is Gemma2ForCausalLM or Gemma3ForCausalLM
-#    def Gemma2():
-#        isGemma2 = (config.get("architectures", [])[0] == "Gemma2ForCausalLM")
-#        if isGemma2:
-#            print("*** Gemma2ForCausalLM: Forcing torch_dtype = bfloat16 and attn_implementation = 'eager' ***")
-#            use_bfloat16 = True  # Force bfloat16 for Gemma2 regardless of user preference
-#            
-#        # Use float16 and 4-bit for 'cuda'.
-#        if device == "cuda":
-#            # dtype based on passed param
-#            self.torch_dtype = torch.bfloat16 if use_bfloat16 else torch.float16
-#            print(f"Using torch_dtype = {'bfloat16' if use_bfloat16 else 'float16'} for all models on {device}")
-#             # Configure quant
-#            if quantization == "4bit":
-#                print("Using 4-bit quantization")
-#                self.quantization_config = BitsAndBytesConfig(
-#                    load_in_4bit=True,
-#                    bnb_4bit_compute_dtype=self.torch_dtype
-#                )
-#            elif quantization == "8bit":
-#                print("Using 8-bit quantization")
-#                self.quantization_config = BitsAndBytesConfig(
-#                    load_in_8bit=True
-#                )
-#            else:  # half-precision
-#                print("Using no quantization")
-#                self.quantization_config = None
-
-    def Gemma3():
-        isGemma3 = (config.get("architectures", [])[0] == "Gemma3ForCausalLM" or "gemma3" in config.get("model_type", "").lower())
-        # Use float16 and 4-bit for 'cuda'.
-        if device == "cuda":
-            # Adjust dtype for Gemma2/Gemma3
-            self.torch_dtype = torch.bfloat16 if isGemma3
-            if quantization == "4bit"
-                self.quantization_config = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype=self.torch_dtype)
-            # Use the model's actual float type for 'cpu'.
-            elif device == "cpu":
-
-            if "torch_dtype" not in config:
-               raise KeyError("The 'torch_dtype' key is missing in the configuration file")
 
     def get_num_layers(self):
         return len(self.model.model.layers)
@@ -122,7 +90,7 @@ class ModelHandler:
         if direction_matrix.device != self.model.device:
             direction_matrix = direction_matrix.to(self.model.device)
 
-        # Each vector must have unit norm so V.V^T correctly computes the projection onto the subspace.
+        # Each vector must have unit norm so V^T.V correctly computes the projection onto the subspace.
         # NOTE: The projection matrix calculation is invariant to the signs of the vectors though...
         direction_matrix = torch.nn.functional.normalize(direction_matrix, p = 2, dim = 1)
 
@@ -266,4 +234,3 @@ class ModelHandler:
     def delete(self):
         del self.model
         del self.tokenizer
-

@@ -1,6 +1,6 @@
 # code for computing conceptors borrowed from https://github.com/jorispos/ConceptorSteering/
 
-import torch
+import torch  # noqa: I001
 import logging
 from typing import Union, Optional, List
 from hidden_state_data_manager import HiddenStateDataManager
@@ -111,7 +111,7 @@ def compute_conceptor_low_rank(X: torch.Tensor, aperture: float, rank: int = 200
     return U, S_c
 
 
-def compute_low_rank_conceptor_automatic(X: torch.Tensor, aperture: float, variance_threshold: float=0.99) -> tuple[torch.Tensor, torch.Tensor]:
+def compute_low_rank_conceptor_automatic(X: torch.Tensor, aperture: float, variance_thres: float=0.99) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Computes a low-rank approximation of the conceptor matrix using a variance threshold
     to select the rank.
@@ -119,7 +119,7 @@ def compute_low_rank_conceptor_automatic(X: torch.Tensor, aperture: float, varia
     Parameters:
         X (torch.Tensor): Input matrix of shape (n_samples, n_features).
         aperture (float): Aperture parameter.
-        variance_threshold (float): Desired variance retention.
+        variance_thres (float): Desired variance retention.
 
     Returns:
         U_k (torch.Tensor): Left singular vectors (n_features, k).
@@ -144,7 +144,7 @@ def compute_low_rank_conceptor_automatic(X: torch.Tensor, aperture: float, varia
     variance_ratios = cumulative_variance / total_variance
 
     # Determine k
-    k = torch.searchsorted(variance_ratios, variance_threshold).item() + 1
+    k = torch.searchsorted(variance_ratios, variance_thres).item() + 1
 
     U_k = eigenvectors[:, :k]
     s_k = scaling_factors[:k]
@@ -152,14 +152,14 @@ def compute_low_rank_conceptor_automatic(X: torch.Tensor, aperture: float, varia
     return U_k, s_k
 
 
-def compute_optimal_low_rank_conceptor(C: torch.Tensor, threshold: float = 1e-4) -> tuple[torch.Tensor, torch.Tensor]:
+def compute_optimal_low_rank_conceptor(C: torch.Tensor, thres: float = 1e-4) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Computes a low-rank approximation of a conceptor matrix by keeping only
     significant singular values.
 
     Args:
         C: Original conceptor matrix
-        threshold: Relative threshold for keeping singular values
+        thres: Relative thres for keeping singular values
                   (compared to largest singular value)
 
     Returns:
@@ -171,7 +171,7 @@ def compute_optimal_low_rank_conceptor(C: torch.Tensor, threshold: float = 1e-4)
 
     # Find optimal rank by looking at singular value decay
     max_sv = s[0]
-    mask = s >= (threshold * max_sv)
+    mask = s >= (thres * max_sv)
     k = mask.sum().item()
 
     # Keep only the top k components
@@ -194,7 +194,7 @@ class ConceptorAnalyzer:
     plus a parallel structure means[class_idx][layer_idx] => (d,) or None
     if we want to store the mean used.
 
-    The 'center_mode' can be:
+    The 'center' can be:
       - 'none': no mean-centering
       - 'local': subtract each dataset's own mean
       - 'baseline': subtract the baseline dataset's mean from all other classes
@@ -204,24 +204,23 @@ class ConceptorAnalyzer:
     def __init__(
             self,
             hidden_state_data_manager: "HiddenStateDataManager",
-            skip_begin_layers: Union[int, float] = 1,
-            skip_end_layers: Union[int, float] = 1,
-            aperture: float = 0.1,
-            center_mode: str = "none",
-            low_rank_approximation: bool = False,
-            low_rank_method: Optional[str] = None,
-            rank: Optional[int] = None,
-            variance_threshold: Optional[float] = None,
-            threshold: Optional[float] = None,
+            skip_early_layers: int,
+            skip_late_layers: int,
+            aperture: float,
+            center: str,
+            lora: bool,
+            lora_method: Optional[str],
+            rank: Optional[int],
+            variance_thres: Optional[float],
+            thres: Optional[float]
     ):
         """
         Args:
-            hidden_state_data_manager: The data manager that supplies get_datasets(layer).
-            skip_begin_layers (int|float): # of initial layers to skip (may be fraction).
-            skip_end_layers (int|float): # of final layers to skip (may be fraction).
-            aperture (float): Aperture parameter for the conceptor formula (must be > 0).
-            center_mode (str): "none", "local", or "baseline"
-                               controlling how we perform mean-centering.
+        hidden_state_data_manager: The data manager that supplies get_datasets(layer).
+        skip_early_layers (int|float): # of initial layers to skip (may be fraction).
+        skip_late_layers (int|float): # of final layers to skip (may be fraction).
+        aperture (float): Aperture parameter for the conceptor formula (must be > 0).
+        center (str): "none", "local", "baseline" -- how we perform mean-centering.
         """
         if aperture <= 0:
             raise ValueError("Aperture must be positive")
@@ -230,59 +229,59 @@ class ConceptorAnalyzer:
         self.num_layers = hidden_state_data_manager.get_num_layers()
         self.num_dataset_types = hidden_state_data_manager.get_num_dataset_types()
 
-        if isinstance(skip_begin_layers, float) and 0 < skip_begin_layers < 1:
-            skip_begin_layers = round(skip_begin_layers * self.num_layers)
-        if isinstance(skip_end_layers, float) and 0 < skip_end_layers < 1:
-            skip_end_layers = round(skip_end_layers * self.num_layers)
+        if isinstance(skip_early_layers, float) and 0 < skip_early_layers < 1:
+            skip_early_layers = round(skip_early_layers * self.num_layers)
+        if isinstance(skip_late_layers, float) and 0 < skip_late_layers < 1:
+            skip_late_layers = round(skip_late_layers * self.num_layers)
 
-        if skip_begin_layers + skip_end_layers >= self.num_layers:
-            raise ValueError("Too many layers skipped (start + end >= total layers).")
+        if skip_early_layers + skip_late_layers >= self.num_layers:
+            raise ValueError("Skipping all layers is fast, but you'll find the results unsatisfying (start + end >= total layers).")
 
-        self.skip_begin_layers = skip_begin_layers
-        self.skip_end_layers = skip_end_layers
+        self.skip_early_layers = skip_early_layers
+        self.skip_late_layers = skip_late_layers
 
         self.aperture = aperture
-        self.center_mode = center_mode.lower()
-        if self.center_mode not in ["none", "local", "baseline"]:
-            raise ValueError(f"Invalid center_mode: {self.center_mode}")
+        self.center = center.lower()
+        if self.center not in ["none", "local", "baseline"]:
+            raise ValueError(f"Invalid center: {self.center}")
 
-        self.low_rank_approximation = low_rank_approximation
+        self.lora = lora
 
-        if self.low_rank_approximation:
-            if low_rank_method not in ["manual", "automatic", "optimal"]:
-                raise ValueError("low_rank_method must be one of 'manual', 'automatic', or 'optimal' when low_rank_approximation is True")
-            self.low_rank_method = low_rank_method
-            if low_rank_method == "manual":
+        if self.lora:
+            if lora_method not in ["manual", "automatic", "optimal"]:
+                raise ValueError("lora_method must be one of 'manual', 'automatic', or 'optimal' when lora is True")
+            self.lora_method = lora_method
+            if lora_method == "manual":
                 if rank is None:
-                    raise ValueError("When low_rank_method is 'manual', 'rank' must be specified")
+                    raise ValueError("When lora_method is 'manual', 'rank' must be specified")
                 self.rank = rank
-            elif low_rank_method == "automatic":
-                if variance_threshold is None:
-                    raise ValueError("When low_rank_method is 'automatic', 'variance_threshold' must be specified")
-                self.variance_threshold = variance_threshold
-            elif low_rank_method == "optimal":
-                if threshold is None:
-                    raise ValueError("When low_rank_method is 'optimal', 'threshold' must be specified")
-                self.threshold = threshold
+            elif lora_method == "automatic":
+                if variance_thres is None:
+                    raise ValueError("When lora_method is 'automatic', 'variance_thres' must be specified")
+                self.variance_thres = variance_thres
+            elif lora_method == "optimal":
+                if thres is None:
+                    raise ValueError("When lora_method is 'optimal', 'thres' must be specified")
+                self.thres = thres
             else:
-                raise ValueError(f"Unknown low_rank_method {low_rank_method}")
+                raise ValueError(f"Unknown lora_method {lora_method}")
         else:
-            self.low_rank_method = None
+            self.lora_method = None
             self.rank = None
-            self.variance_threshold = None
-            self.threshold = None
+            self.variance_thres = None
+            self.thres = None
 
-        self.conceptors: List[List[Optional[ConceptorRepresentation]]] = ...
+        self.conceptors: List[List[Optional[ConceptorRepresentation]]] = []
         self.means: List[List[Optional[torch.Tensor]]] = []
         self._compute_conceptors_all()
 
     def _compute_baseline_means(self) -> List[Optional[torch.Tensor]]:
-        baseline_means_by_layer = [None] * self.num_layers
+        baseline_means_by_layer: List[Optional[torch.Tensor]] = [None] * self.num_layers
 
-        if self.center_mode == "baseline" and self.num_dataset_types > 0:
-            for layer_idx in range(self.skip_begin_layers, self.num_layers - self.skip_end_layers):
+        if self.center == "baseline" and self.num_dataset_types > 0:
+            for layer_idx in range(self.skip_early_layers, self.num_layers - self.skip_late_layers):
                 X_base = self.hidden_state_data_manager.get_datasets(layer_idx)[0]
-                X_base = X_base.float().cpu()
+                X_base = X_base.int().cpu()
                 baseline_means_by_layer[layer_idx] = X_base.mean(dim=0, keepdim=True)
         return baseline_means_by_layer
 
@@ -294,54 +293,54 @@ class ConceptorAnalyzer:
         baseline_means_by_layer: List[Optional[torch.Tensor]],
         ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
 
-        if self.center_mode == "none":
+        if self.center == "none":
             return X, None
-        if self.center_mode == "local":
+        if self.center == "local":
             mean_vec = X.mean(dim=0, keepdim=True)
             return X - mean_vec, mean_vec
-        if self.center_mode == "baseline":
+        if self.center == "baseline":
             if class_idx == 0:
                 return X, None
             mean_vec = baseline_means_by_layer[layer_idx]
             return X - mean_vec, mean_vec
-        raise ValueError(f"Unknown center_mode {self.center_mode}")    
-        
+        raise ValueError(f"Unknown center {self.center}")
+
     def _compute_conceptor_for_X(self, X: torch.Tensor) -> ConceptorRepresentation:
-        if self.low_rank_approximation:
+        if self.lora:
             # same low-rank logic as above...
             return ConceptorRepresentation(is_low_rank=True, U=U_k.cpu(), s=s_k.cpu())
         else:
             C = compute_conceptor(X, self.aperture)
             return ConceptorRepresentation(is_low_rank=False, full=C.cpu())
-            
+
     def _compute_conceptors_all(self):
         self.conceptors = [[None for _ in range(self.num_layers)]
                            for _ in range(self.num_dataset_types)]
         self.means = [[None for _ in range(self.num_layers)]
                       for _ in range(self.num_dataset_types)]
-    
+
         baseline_means_by_layer = self._compute_baseline_means()
-    
-        total_computations = (self.num_layers - self.skip_begin_layers - self.skip_end_layers) * self.num_dataset_types
+
+        total_computations = (self.num_layers - self.skip_early_layers - self.skip_late_layers) * self.num_dataset_types
         with tqdm(total=total_computations, desc="Computing conceptors") as pbar:
             for class_idx in range(self.num_dataset_types):
-                for layer_idx in range(self.skip_begin_layers, self.num_layers - self.skip_end_layers):
+                for layer_idx in range(self.skip_early_layers, self.num_layers - self.skip_late_layers):
                     X = self.hidden_state_data_manager.get_datasets(layer_idx)[class_idx]
                     X = X.float().cpu()
-    
+
                     X_centered, mean_vec = self._center_X(X, class_idx, layer_idx, baseline_means_by_layer)
-    
+
                     try:
                         conceptor_repr = self._compute_conceptor_for_X(X_centered)
                         self.conceptors[class_idx][layer_idx] = conceptor_repr
                     except RuntimeError as e:
                         logging.error(f"Error computing conceptor at layer={layer_idx} class={class_idx}: {e}")
-    
+
                     if mean_vec is not None:
                         self.means[class_idx][layer_idx] = mean_vec.squeeze(0).cpu()
-    
+
                     pbar.update(1)
-                    
+
     def get_conceptor(self, class_idx: int, layer_idx: int) -> Optional[torch.Tensor]:
         """Returns the conceptor for the given class/layer, or None if not computed."""
         return self.conceptors[class_idx][layer_idx]
