@@ -1,5 +1,4 @@
-+
-----------# code for computing conceptors borrowed from https://github.com/jorispos/ConceptorSteering/
+# code for computing conceptors borrowed from https://github.com/jorispos/ConceptorSteering/
 
 import torch  # noqa: I001
 import logging
