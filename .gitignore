@@ -26,7 +26,6 @@ yarn-error.log*
 *~
 
 # Data & uploads
-data/
 uploads/
 tmp/
 .cache/
@@ -43,5 +42,6 @@ __pycache__/
 venv/
 env/
 .Python
+.pytest_cache/
 *.egg-info/
 .eggs/
