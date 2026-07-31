@@ -1,4 +1,5 @@
-# code for computing conceptors borrowed from https://github.com/jorispos/ConceptorSteering/
++
+----------# code for computing conceptors borrowed from https://github.com/jorispos/ConceptorSteering/
 
 import torch  # noqa: I001
 import logging
@@ -217,8 +218,8 @@ class ConceptorAnalyzer:
         """
         Args:
         hidden_state_data_manager: The data manager that supplies get_datasets(layer).
-        skip_early_layers (int|float): # of initial layers to skip (may be fraction).
-        skip_late_layers (int|float): # of final layers to skip (may be fraction).
+        skip_early_layers (int): # of initial layers to skip (may be fraction).
+        skip_late_layers (int): # of final layers to skip (may be fraction).
         aperture (float): Aperture parameter for the conceptor formula (must be > 0).
         center (str): "none", "local", "baseline" -- how we perform mean-centering.
         """
@@ -246,6 +247,10 @@ class ConceptorAnalyzer:
             raise ValueError(f"Invalid center: {self.center}")
 
         self.lora = lora
+        self.lora_method = None
+        self.rank = None
+        self.variance_thres = variance_thres
+        self.thres = thres
 
         if self.lora:
             if lora_method not in ["manual", "automatic", "optimal"]:
@@ -259,17 +264,10 @@ class ConceptorAnalyzer:
                 if variance_thres is None:
                     raise ValueError("When lora_method is 'automatic', 'variance_thres' must be specified")
                 self.variance_thres = variance_thres
-            elif lora_method == "optimal":
+            else:
                 if thres is None:
                     raise ValueError("When lora_method is 'optimal', 'thres' must be specified")
                 self.thres = thres
-            else:
-                raise ValueError(f"Unknown lora_method {lora_method}")
-        else:
-            self.lora_method = None
-            self.rank = None
-            self.variance_thres = None
-            self.thres = None
 
         self.conceptors: List[List[Optional[ConceptorRepresentation]]] = []
         self.means: List[List[Optional[torch.Tensor]]] = []
@@ -281,7 +279,7 @@ class ConceptorAnalyzer:
         if self.center == "baseline" and self.num_dataset_types > 0:
             for layer_idx in range(self.skip_early_layers, self.num_layers - self.skip_late_layers):
                 X_base = self.hidden_state_data_manager.get_datasets(layer_idx)[0]
-                X_base = X_base.int().cpu()
+                X_base = X_base.float().cpu()
                 baseline_means_by_layer[layer_idx] = X_base.mean(dim=0, keepdim=True)
         return baseline_means_by_layer
 
@@ -307,7 +305,15 @@ class ConceptorAnalyzer:
 
     def _compute_conceptor_for_X(self, X: torch.Tensor) -> ConceptorRepresentation:
         if self.lora:
-            # same low-rank logic as above...
+            if self.lora_method == "manual":
+                if self.rank is None or not 1 <= self.rank <= X.shape[1]:
+                    raise ValueError("rank must be between 1 and the feature dimension")
+                U_k, s_k = compute_conceptor_low_rank(X, self.aperture, rank=self.rank)
+            elif self.lora_method == "automatic":
+                U_k, s_k = compute_low_rank_conceptor_automatic(X, self.aperture, variance_thres=self.variance_thres)
+            else:
+                C = compute_conceptor(X, self.aperture)
+                U_k, s_k = compute_optimal_low_rank_conceptor(C, thres=self.thres)
             return ConceptorRepresentation(is_low_rank=True, U=U_k.cpu(), s=s_k.cpu())
         else:
             C = compute_conceptor(X, self.aperture)

@@ -10,7 +10,7 @@ Deferred pending scope — see chat history around 2026-07-30 for the full discu
 1. Replace manual `json.load(config.json)` parsing with `AutoConfig.from_pretrained(..., trust_remote_code=True)`.
    - Generalizes across architectures without hand-tracking key names/shapes.
 2. Stop forcing `attn_implementation="flash_attention_2"` by default; pass `None` and let
-   Transformers auto-select (flash_attention_2 → sdpa → eager) with a safe fallback.
+   Transformers auto-select (flash_attention_2 → sdpa → eager) with a safe fallback. This needs to be double-checked.  Transformers default is presently SDPA-first.  flash_attn might need internal implementation.
 3. Replace the `isGemma3` branch with a small quirks registry keyed by architecture name
    (`config.architectures[0]`), storing only verified overrides:
    ```python
@@ -133,8 +133,6 @@ Implementation sketch (not yet done): in `ModelHandler.__init__`, detect a `.ggu
 (e.g. `str(pretrained_model_name_or_path).endswith(".gguf")`), and when combined with
 `precision == "orig"`, branch to `AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path,
 gguf_file=pretrained_model_name_or_path, ...)` — note there's no separate `config.json` to
-read in this case, so the `AutoConfig`-based quirks-registry lookup (see "Planned
-direction" above) needs to come from `AutoConfig.from_pretrained(..., gguf_file=...)` or
-the model's own `.config` post-load, not from a standalone `config.json` file read. Reject
+read in this case, read the gguf file's own internal config. Reject
 (raise) the combination of a `.gguf` source path with `precision in ("bfloat16", "4bit",
-"8bit")` rather than silently reinterpreting the user's intent.
+"8bit")` rather than silently reinterpreting the user's intent or ignore precision flag altogether and use what we are given.

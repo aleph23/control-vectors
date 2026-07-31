@@ -11,7 +11,7 @@ class ModelHandler:
     def __init__(
             self,
             pretrained_model_name_or_path: Union[str, os.PathLike],
-            device = "cuda",
+            device: Literal["cuda", "cpu"] = "cuda",
             precision: Literal["bfloat16", "4bit", "8bit", "orig"] = "orig"
             ):
         self.device = device
@@ -26,7 +26,11 @@ class ModelHandler:
         # Determine if the model is Gemma3ForCausalLM.
         # NOTE: The Gemma3 models need attn_implementation="eager" and don't like float16 due to the +/- 2^16 range.
         #       https://old.reddit.com/r/LocalLLaMA/comments/1dsvpp2/thread_on_running_gemma_2_correctly_with_hf/
-        isGemma3 = (config.get("architectures", [])[0] == "Gemma3ForCausalLM" or "gemma3" in config.get("model_type", "").lower())
+        architectures = config.get("architectures") or []
+        isGemma3 = (
+            "Gemma3ForCausalLM" in architectures
+            or "gemma3" in (config.get("model_type") or "").lower()
+        )
 
         # 'orig' honors the model's own dtype (per config.json); 'bfloat16'/'4bit'/'8bit' all compute in bfloat16.
         if precision == "orig":
@@ -43,6 +47,9 @@ class ModelHandler:
             print("*** Gemma3ForCausalLM: using attn_implementation = 'eager' ***")
 
         print(f"Using torch_dtype = {self.torch_dtype}")
+
+        if device not in ("cuda", "cpu"):
+            raise RuntimeError(f"The device must be 'cpu' or 'cuda': {device}")
 
         # Quantization is only supported on 'cuda'.
         if precision in ("4bit", "8bit"):
@@ -61,17 +68,16 @@ class ModelHandler:
             print("Using no quantization")
             self.quantization_config = None
 
-        if device not in ("cuda", "cpu"):
-            raise RuntimeError(f"The device must be 'cpu' or 'cuda': {device}")
 
+        # Adjust attn_implementation for Gemma3.
+        attn_implementation = "eager" if isGemma3 else "flash_attention_2"
         print(f"Loading '{pretrained_model_name_or_path}' model and tokenizer...")
         self.model = AutoModelForCausalLM.from_pretrained(
             pretrained_model_name_or_path,
             torch_dtype = self.torch_dtype,
             quantization_config = self.quantization_config,
+            attn_implementation = attn_implementation,
             device_map = 'auto' if device == "cuda" else 'cpu',
-            # Adjust attn_implementation for Gemma3.
-            attn_implementation=None if device != "cuda" else ("eager" if isGemma3 else "flash_attention_2"),
             trust_remote_code=True,
             low_cpu_mem_usage = True,
         )
