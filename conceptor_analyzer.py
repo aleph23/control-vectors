@@ -2,7 +2,6 @@
 
 import torch
 import logging
-from typing import Union, Optional, List
 from hidden_state_data_manager import HiddenStateDataManager
 from tqdm import tqdm
 from dataclasses import dataclass
@@ -304,8 +303,8 @@ class ConceptorAnalyzer:
                 return X, None
             mean_vec = baseline_means_by_layer[layer_idx]
             return X - mean_vec, mean_vec
-        raise ValueError(f"Unknown center_mode {self.center_mode}")    
-        
+        raise ValueError(f"Unknown center_mode {self.center_mode}")
+
     def _compute_conceptor_for_X(self, X: torch.Tensor) -> ConceptorRepresentation:
         if self.low_rank_approximation:
             # same low-rank logic as above...
@@ -313,35 +312,35 @@ class ConceptorAnalyzer:
         else:
             C = compute_conceptor(X, self.aperture)
             return ConceptorRepresentation(is_low_rank=False, full=C.cpu())
-            
+
     def _compute_conceptors_all(self):
         self.conceptors = [[None for _ in range(self.num_layers)]
                            for _ in range(self.num_dataset_types)]
         self.means = [[None for _ in range(self.num_layers)]
                       for _ in range(self.num_dataset_types)]
-    
+
         baseline_means_by_layer = self._compute_baseline_means()
-    
+
         total_computations = (self.num_layers - self.skip_begin_layers - self.skip_end_layers) * self.num_dataset_types
         with tqdm(total=total_computations, desc="Computing conceptors") as pbar:
             for class_idx in range(self.num_dataset_types):
                 for layer_idx in range(self.skip_begin_layers, self.num_layers - self.skip_end_layers):
                     X = self.hidden_state_data_manager.get_datasets(layer_idx)[class_idx]
                     X = X.float().cpu()
-    
+
                     X_centered, mean_vec = self._center_X(X, class_idx, layer_idx, baseline_means_by_layer)
-    
+
                     try:
                         conceptor_repr = self._compute_conceptor_for_X(X_centered)
                         self.conceptors[class_idx][layer_idx] = conceptor_repr
                     except RuntimeError as e:
                         logging.error(f"Error computing conceptor at layer={layer_idx} class={class_idx}: {e}")
-    
+
                     if mean_vec is not None:
                         self.means[class_idx][layer_idx] = mean_vec.squeeze(0).cpu()
-    
+
                     pbar.update(1)
-                    
+
     def get_conceptor(self, class_idx: int, layer_idx: int) -> Optional[torch.Tensor]:
         """Returns the conceptor for the given class/layer, or None if not computed."""
         return self.conceptors[class_idx][layer_idx]
