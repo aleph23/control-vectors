@@ -25,14 +25,16 @@ See [here](https://huggingface.co/jukofyork/creative-writing-control-vectors-v3.
 ## Quick Start
 
 ```sh
-pip install torch transformers tqdm gguf
-python create_control_vectors.py --model_id <model_path> \
-    --output_path <output_path> \
-    --prompt_stems_file <prompt_stems> \
-    --continuations_file <continuations> \
-    --writing_prompts_file <writing_prompts> \
-    --num_prompt_samples <num_samples>
+pip install -r requirements.txt
+python create_control_vectors.py --model <model_path> \
+    --outpath <output_path> \
+    --prompts <prompt_stems> \
+    --continuations <continuations> \
+    --writing-prompts-file <writing_prompts> \
+    --num-samples <num_samples>
 ```
+
+**Note: A CUDA GPU is required.** The pipeline is CUDA-only; there is no CPU path.
 
 ## Overview
 
@@ -41,21 +43,26 @@ The program operates in several steps:
 2. **Hidden State Extraction**: Use `HiddenStateDataManager` to tokenize the data and extract hidden states from a pretrained model.
 3. **Direction Analysis**: Analyse the hidden states to find directions that maximize discriminant ratios using `DirectionAnalyzer`.
 4. **Model Modification**: Use the analysed directions and export control vectors using `ModelHandler`.
+5. **Conceptors (experimental)**: As an alternative to control vectors, use `ConceptorAnalyzer` to compute conceptor matrices and export them as `_conceptor_<class>.gguf` files via `--conceptors`. The interface works but the low-rank and centering variants are unverified.
 
 ## Requirements
 
+- **CUDA GPU required** — the pipeline is CUDA-only; there is no CPU path.
 - Python 3.8+
 - PyTorch
 - Transformers library
 - tqdm
 - gguf (for exporting control vectors)
+- bitsandbytes (required for `--precision 4bit` or `--precision 8bit`)
 
 ## Installation
 
 Before running the script, ensure all required libraries are installed:
 
 ```sh
-pip install torch transformers tqdm gguf
+pip install -r requirements.txt                  # base
+pip install -r requirements-flash.txt            # optional, only for --attn flash
+pip install -r requirements.txt -r requirements-dev.txt   # to run the tests
 ```
 
 **NOTE**: For very recent models, you may need to install transformers from source:
@@ -70,28 +77,48 @@ The main script can be executed from the command line with various parameters to
 
 ### Command Line Arguments
 
-- `--model_id`: The model ID to load the pretrained model from.
-- `--output_path`: The path to save the modified models to.
-- `--prompt_stems_file`: The file path for prompt stems.
-- `--continuations_file`: The file path for continuations.
-- `--writing_prompts_file`: The file path for writing prompts.
-- `--num_prompt_samples`: The number of prompts to sample per class (default: 10000).
-- `--use_separate_system_message`: Flag to use separate system messages in conversation (default: False).
-- `--skip_begin_layers`: The number (or fraction) of initial layers to skip (default: 0).
-- `--skip_end_layers`: The number (or fraction) of end layers to skip (default: 1).
-- `--discriminant_ratio_tolerance`: Tolerance used to filter/select the directions (default: 0.5).
+**Required:**
+- `--model`: Absolute or relative path to a **local model directory containing `config.json`**. A bare HuggingFace hub ID will fail with `FileNotFoundError`.
+- `--outpath`: The path prefix to save the output GGUF files to.
+- `--prompts`: The file path for prompt stems (`data/prompt_stems.json`).
+- `--continuations`: The file path for continuations (e.g. `data/dark_tetrad_continuations/compassion_vs_sadism.json`).
+- `--writing-prompts-file`: The file path for the newline-delimited creative-writing prompts file (`data/writing_prompts.txt`).
+
+**Sampling:**
+- `--num-samples`: The **total** number of prompt samples to generate, split evenly across classes (baseline + the two continuation classes). Default: 10000. With the standard 2-class continuation files there are 3 classes, so `--num-samples 12288` yields 4096 samples per class.
+- `--no-use-system-prompt`: Disable the separate system prompt. The system prompt is **on by default** (use this flag to turn it off).
+- `--batch-size`: Batch size for hidden state generation. Default: 1 (no batching).
+
+**Layer / direction selection:**
+- `--skip-early-layers`: The number of beginning layers to skip. Default: 1.
+- `--skip-late-layers`: The number of ending layers to skip. Default: 1.
+- `--gate`: Noise gate (discriminant ratio tolerance). Default: 0.3. 0.0 is ungated.
+
+**Model loading:**
+- `--precision`: Precision for model operations. Choices: `bfloat16`, `4bit`, `8bit`, `orig` (default: `orig`).
+- `--attn`: Attention implementation. Choices: `none` (auto-select), `flash` (flash_attention_2), `sdpa`, `eager`. Default: `none`.
+
+**Conceptors (experimental):**
+- `--conceptors`: Use conceptors instead of control vectors.
+- `--conceptor-aperture`: Aperture for conceptor computation. Default: 0.1.
+- `--center`: Mean-centering mode. Choices: `none`, `local`, `baseline`. Default: `none`.
+- `--lora`: Use low-rank approximation for conceptors.
+- `--lora-method`: Method for low-rank approximation. Choices: `manual`, `automatic`, `optimal`.
+- `--rank`: Rank for `manual` low-rank method.
+- `--variance-thres`: Variance threshold for `automatic` low-rank method.
+- `--thres`: Explicit threshold for `optimal` lora method.
 
 ### Running the Script
 
 To run the script, use the following command:
 
 ```sh
-python create_control_vectors.py --model_id <model_path> \
-    --output_path <output_path> \
-    --prompt_stems_file <prompt_stems> \
-    --continuations_file <continuations> \
-    --writing_prompts_file <writing_prompts> \
-    --num_prompt_samples <num_samples>
+python create_control_vectors.py --model <model_path> \
+    --outpath <output_path> \
+    --prompts <prompt_stems> \
+    --continuations <continuations> \
+    --writing-prompts-file <writing_prompts> \
+    --num-samples <num_samples>
 ```
 
 Replace `<model_path>`, `<output_path>`, `<prompt_stems>`, `<continuations>`, and `<writing_prompts>` with your specific paths and filenames.
@@ -102,7 +129,7 @@ It seems that setting `<num_samples>` to the value found in the `config.json` fi
   "hidden_size": 8192,
 ```
 
-works well from my testing, but you may want to increase this to get even better control vectors (or decrease to reduce run times).
+works well from my testing, but you may want to increase this to get even better control vectors (or decrease to reduce run times). Note that `--num-samples` is a **total** across all classes; with 3 classes (baseline + 2 continuations), `--num-samples 12288` gives 4096 samples per class.
 
 This command will generate a set of writing-style "language" control vectors model like so:
 
@@ -117,12 +144,12 @@ Which are then saved to the specified output path.
 Assuming a local copy of the `Mistral-Large-Instruct-2407` model is in the current folder:
 
 ```sh
-python create_control_vectors.py --model_id Mistral-Large-Instruct-2407 \
-    --output_path mistral-large:123b-language_ \
-    --prompt_stems_file data/prompt_stems.json \
-    --continuations_file data/writing_style_continuations/language.json \
-    --writing_prompts_file data/writing_prompts.txt  \
-    --num_samples_per_class 12288
+python create_control_vectors.py --model Mistral-Large-Instruct-2407 \
+    --outpath mistral-large:123b-language_ \
+    --prompts data/prompt_stems.json \
+    --continuations data/writing_style_continuations/language.json \
+    --writing-prompts-file data/writing_prompts.txt  \
+    --num-samples 12288
 ```
 
 This command will generate a set of writing-style "language" control vectors model like so:
@@ -869,6 +896,12 @@ If you encounter any issues, please check the following:
 1. Ensure all dependencies are correctly installed.
 2. Check that you're using a compatible version of Python and the required libraries.
 3. Verify that your input files (prompt stems, continuations, writing prompts) are in the correct format.
+
+**Common failure modes:**
+
+- **`--attn flash` fails:** flash-attn is not installed. Install it via `pip install -r requirements-flash.txt`, or use `--attn sdpa` or `--attn none` (the default).
+- **`FileNotFoundError: Configuration file not found`:** `--model` must be a **local directory containing `config.json`**, not a HuggingFace hub ID. Download the model first (e.g. via `huggingface-cli download`).
+- **Stale cache:** The hidden-state cache is keyed only by `--outpath`. Changing `--num-samples` or the model without changing `--outpath` will reuse the wrong cache. Delete the `<outpath>_hidden_state_samples.pt` file or use a new `--outpath`. Shape mismatches (class count, layer count) are detected and trigger automatic regeneration, but same-shape-different-content collisions are not.
 
 If problems persist, please open an issue on the GitHub repository with a detailed description of the problem and steps to reproduce it.
 

@@ -12,7 +12,8 @@ class ModelHandler:
             self,
             pretrained_model_name_or_path: Union[str, os.PathLike],
             device: Literal["cuda", "cpu"] = "cuda",
-            precision: Literal["bfloat16", "4bit", "8bit", "orig"] = "orig"
+            precision: Literal["bfloat16", "4bit", "8bit", "orig"] = "orig",
+            attn: Literal["none", "flash", "sdpa", "eager"] = "none"
             ):
         self.device = device
 
@@ -69,8 +70,34 @@ class ModelHandler:
             self.quantization_config = None
 
 
-        # Adjust attn_implementation for Gemma3.
-        attn_implementation = "eager" if isGemma3 else "flash_attention_2"
+        # Map CLI --attn vocabulary to Transformers' attn_implementation.
+        _attn_map = {
+            "none": None,
+            "flash": "flash_attention_2",
+            "sdpa": "sdpa",
+            "eager": "eager",
+        }
+        if attn not in _attn_map:
+            raise ValueError(f"Unknown attn value: {attn!r}")
+        attn_implementation = _attn_map[attn]
+
+        # Gemma3 requires eager attention; override the user's choice if needed.
+        if isGemma3 and attn_implementation != "eager":
+            print(f"*** Gemma3ForCausalLM: overriding attn_implementation from {attn_implementation!r} to 'eager' (Gemma3 requires eager) ***")
+            attn_implementation = "eager"
+
+        # Guard: if user asked for flash, make sure flash_attn is importable.
+        if attn_implementation == "flash_attention_2":
+            try:
+                import flash_attn  # noqa: F401
+            except ImportError:
+                raise RuntimeError(
+                    "flash-attn is not installed, but --attn flash was requested. "
+                    "Install it via: pip install -r requirements-flash.txt, "
+                    "or use --attn sdpa / --attn none."
+                )
+
+        print(f"Using attn_implementation = {attn_implementation!r}")
         print(f"Loading '{pretrained_model_name_or_path}' model and tokenizer...")
         self.model = AutoModelForCausalLM.from_pretrained(
             pretrained_model_name_or_path,
@@ -180,12 +207,14 @@ class ModelHandler:
         Exports conceptors and means for a single class in GGUF format.
 
         Parameters:
-            conceptors: List of conceptor matrices for the class [layer_idx] -> torch.Tensor(d, d) or None
+            conceptors: List of conceptor matrices for the class [layer_idx] -> ConceptorRepresentation or None
             means: List of mean vectors for the class [layer_idx] -> torch.Tensor(d) or None
             class_idx: The index of the class being exported
             path: Output file path
         """
         import gguf
+        from conceptor_analyzer import ConceptorRepresentation, reconstruct_conceptor
+
         ARCHITECTURE = "conceptor"
         writer = gguf.GGUFWriter(path, ARCHITECTURE)
 
@@ -200,11 +229,10 @@ class ModelHandler:
         hidden_dim = None
         for con in conceptors:
             if con is not None:
-                if isinstance(con, tuple):  # Low-rank approximation (U_k, s_k)
-                    U_k, _ = con
-                    hidden_dim = U_k.shape[0]
+                if con.is_low_rank:
+                    hidden_dim = con.U.shape[0]
                 else:
-                    hidden_dim = con.shape[0]
+                    hidden_dim = con.full.shape[0]
                 break
         if hidden_dim is None:
             raise ValueError("No conceptor found to determine the hidden dimension size")
@@ -214,18 +242,15 @@ class ModelHandler:
         print(f"Processing class index: {class_idx}")
         for layer_idx, (con, m) in enumerate(zip(conceptors, means)):
             if con is not None:
-                if isinstance(con, tuple):  # Low-rank approximation (U_k, s_k)
-                    U_k, s_k = con
-                    Uk_name = f"Uk.{layer_idx}"
-                    sk_name = f"sk.{layer_idx}"
-                    writer.add_tensor(Uk_name, U_k.cpu().numpy())
-                    writer.add_tensor(sk_name, s_k.cpu().numpy())
-                    print(
-                        f"  - Added low-rank conceptor tensors: {Uk_name} with shape {U_k.shape}, {sk_name} with shape {s_k.shape}")
-                else:  # Full conceptor matrix
-                    conceptor_name = f"conceptor.{layer_idx}"
-                    writer.add_tensor(conceptor_name, con.cpu().numpy())
-                    print(f"  - Added full conceptor tensor: {conceptor_name} with shape {con.shape}")
+                # Always reconstruct to a full matrix so both paths emit
+                # an identical GGUF layout.
+                if con.is_low_rank:
+                    full_matrix = reconstruct_conceptor(con.U, con.s)
+                else:
+                    full_matrix = con.full
+                conceptor_name = f"conceptor.{layer_idx}"
+                writer.add_tensor(conceptor_name, full_matrix.cpu().numpy())
+                print(f"  - Added conceptor tensor: {conceptor_name} with shape {full_matrix.shape}")
             if m is not None:
                 mean_name = f"mean_vector.{layer_idx}"
                 writer.add_tensor(mean_name, m.cpu().numpy())

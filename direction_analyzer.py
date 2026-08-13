@@ -100,12 +100,6 @@ class DirectionAnalyzer:
 
         num_layers = hidden_state_data_manager.get_num_layers()
 
-        # If passed a fraction, find the actual layer indices.
-        if 0 < start_layer_index < 1:
-            start_layer_index = round(start_layer_index * num_layers)
-        if 0 < skip_end_layers < 1:
-            skip_end_layers = round(skip_end_layers * num_layers)
-
         print(f"Testing Eigenvector Directions for layers {start_layer_index + 1} to {num_layers - skip_end_layers}:")
 
         num_dataset_types = hidden_state_data_manager.get_num_dataset_types()

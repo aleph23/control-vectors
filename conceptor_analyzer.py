@@ -2,7 +2,7 @@
 
 import torch  # noqa: I001
 import logging
-from typing import Union, Optional, List
+from typing import Optional, List
 from hidden_state_data_manager import HiddenStateDataManager
 from tqdm import tqdm
 from dataclasses import dataclass
@@ -228,11 +228,6 @@ class ConceptorAnalyzer:
 
         self.num_layers = hidden_state_data_manager.get_num_layers()
         self.num_dataset_types = hidden_state_data_manager.get_num_dataset_types()
-
-        if isinstance(skip_early_layers, float) and 0 < skip_early_layers < 1:
-            skip_early_layers = round(skip_early_layers * self.num_layers)
-        if isinstance(skip_late_layers, float) and 0 < skip_late_layers < 1:
-            skip_late_layers = round(skip_late_layers * self.num_layers)
 
         if skip_early_layers + skip_late_layers >= self.num_layers:
             raise ValueError("Skipping all layers is fast, but you'll find the results unsatisfying (start + end >= total layers).")

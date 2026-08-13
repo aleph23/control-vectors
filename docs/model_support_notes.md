@@ -136,3 +136,72 @@ gguf_file=pretrained_model_name_or_path, ...)` — note there's no separate `con
 read in this case, read the gguf file's own internal config. Reject
 (raise) the combination of a `.gguf` source path with `precision in ("bfloat16", "4bit",
 "8bit")` rather than silently reinterpreting the user's intent or ignore precision flag altogether and use what we are given.
+
+## Target platform: DGX Spark (GB10, aarch64/sbsa)
+
+The real target for this pipeline is a DGX Spark (Grace-Blackwell GB10, aarch64/sbsa,
+CUDA), not x86. Two CLI options depend on packages whose aarch64 availability is not a
+given.
+
+### PyTorch
+
+PyTorch publishes `manylinux_aarch64` wheels through the standard CUDA index URLs.
+`torch>=2.12.0` as pinned in `requirements.txt` is obtainable on aarch64 via:
+
+```sh
+pip install torch --index-url https://download.pytorch.org/whl/cu128
+```
+
+(Use the CUDA version matching the DGX Spark's driver — check `nvidia-smi` on the
+target. The `cu128` index is the likely match for a Blackwell-era system.)
+
+**Status:** verified from PyTorch's published wheel index (https://pytorch.org/get-started/locally/,
+checked 2026-08-12). The `manylinux` wheel tag covers aarch64 with glibc ≥ 2.28.
+
+### bitsandbytes (`--precision 4bit` / `--precision 8bit`)
+
+bitsandbytes publishes a `manylinux_2_24_aarch64` wheel as of version 0.50.0 (checked
+2026-08-12 on PyPI). The system requirements table on the project page confirms aarch64
+Linux support with NVIDIA GPU (CUDA, SM75+). GB10's Blackwell GPU should be well above
+this floor.
+
+**Status:** verified from published PyPI wheels. `pip install bitsandbytes` should
+work on the DGX Spark without a source build. Fallback if unavailable: use
+`--precision bfloat16` (which routes through `torch.bfloat16` without any bnb
+dependency — see `model_handler.py:36-41`).
+
+### flash-attn (`--attn flash`)
+
+flash-attn publishes **no pre-built wheels for any platform** as of version 2.8.3.post1
+(checked 2026-08-12 on PyPI). Only a source distribution (`flash_attn-2.8.3.post1.tar.gz`)
+is available. Building from source requires:
+
+- A CUDA toolchain (nvcc)
+- Sufficient RAM (the build is resource-intensive)
+- The target GPU's compute capability must be supported
+
+On aarch64/SBSA, the build situation is additionally complicated by the non-x86
+host toolchain. **Recommended:** use `--attn sdpa` or `--attn none` (the default) on
+the DGX Spark. SDPA is PyTorch's built-in fused attention and is available on all
+CUDA platforms without extra dependencies.
+
+If `--attn flash` is required, install `requirements-flash.txt` and expect a
+from-source build. See `requirements-flash.txt` for the install command.
+
+**Status:** inferred from PyPI wheel availability. No aarch64 wheel exists; source
+build is the only path. This has not been empirically tested on a GB10.
+
+### Unified memory
+
+The DGX Spark's GB10 uses unified LPDDR5X memory shared between the Grace CPU and
+Blackwell GPU. This changes the calculus behind the upstream pattern of "reload the
+model on CPU to free VRAM" — on a unified-memory system, a CPU-side reload does not
+free any physical memory; it just changes the access path. This branch therefore loads
+on `cuda` throughout (see `create_control_vectors.py` — `torch.set_default_device("cuda")`
+and all `ModelHandler(..., device="cuda")` calls). The `free_memory()` call between
+the analyzer and the export step is retained as a belt-and-suspenders measure
+(`gc.collect()` + `torch.cuda.empty_cache()`), but the CPU-reload step that upstream
+used after the direction analyzer has been removed.
+
+**Status:** design decision documented for future readers on discrete-GPU hardware
+who may wonder why this branch diverges from upstream's memory management.

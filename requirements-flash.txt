@@ -1,0 +1,5 @@
+# Optional attention backend, required only for `--attn flash`.
+# Needs a CUDA toolchain (nvcc) to build; no Windows wheels are published.
+# On aarch64/sbsa (DGX Spark GB10) see docs/model_support_notes.md.
+# Install after requirements.txt:  pip install -r requirements-flash.txt
+flash-attn

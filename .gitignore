@@ -45,3 +45,5 @@ env/
 .pytest_cache/
 *.egg-info/
 .eggs/
+*.pt
+*.gguf
