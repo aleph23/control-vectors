@@ -93,10 +93,10 @@ Source: HF `transformers` package, `models/gemma4/modular_gemma4.py` (Apache-2.0
 - Does a real Gemma4 checkpoint actually need `attn_implementation="eager"`, or does
   its generic attention-interface lookup mean flash_attention_2/sdpa work fine now?
   (Needs empirical testing against an actual released checkpoint, not just code
-  reading.)
+  reading.) No. It does not.
 - Do we ever want/need to target Gemma4's multimodal variant for control-vector /
   conceptor extraction, or only the text-only `Gemma4ForCausalLM` path? This decides
-  whether `get_num_layers()`/`modify_tensor()` need the structural update above.
+  whether `get_num_layers()`/`modify_tensor()` need the structural update above. Text only.
 - Same open questions apply to Qwen3.6 and any other new architecture — the quirks
   registry only helps once we've actually verified what (if anything) a given
   architecture needs; it shouldn't be pre-populated with guesses.
@@ -109,7 +109,7 @@ regular fp16/bf16 `nn.Module` in memory. Considered as a way to let `ModelHandle
 accept a raw `.gguf` file as `pretrained_model_name_or_path` instead of requiring a full
 HF-format (safetensors) directory.
 
-**Conclusion: not worth adding as a general capability** — dequantizing a GGUF checkpoint
+**Conclusion: not worth adding through Transformers.** — dequantizing a GGUF checkpoint
 just to re-probe it introduces quantization noise into the captured hidden states with no
 compensating benefit (no memory savings vs. a safetensors checkpoint once dequantized,
 and GGUF architecture/quant-type coverage in Transformers lags new releases anyway — see
@@ -128,6 +128,9 @@ dtype" means in that case. This should NOT be wired up for `"bfloat16"`/`"4bit"`
 — those imply the user wants us to actively manage precision, and stacking our own
 quantization/dtype choices on top of an already-dequantized-from-quantized model would
 compound noise for no benefit.
+
+Still need to find a way to work directly with gguf files, but without using Transformers.
+Research Unsloth instead.
 
 Implementation sketch (not yet done): in `ModelHandler.__init__`, detect a `.gguf` path
 (e.g. `str(pretrained_model_name_or_path).endswith(".gguf")`), and when combined with
@@ -149,11 +152,11 @@ PyTorch publishes `manylinux_aarch64` wheels through the standard CUDA index URL
 `torch>=2.12.0` as pinned in `requirements.txt` is obtainable on aarch64 via:
 
 ```sh
-pip install torch --index-url https://download.pytorch.org/whl/cu128
+pip install torch --index-url https://download.pytorch.org/whl/cu130
 ```
 
 (Use the CUDA version matching the DGX Spark's driver — check `nvidia-smi` on the
-target. The `cu128` index is the likely match for a Blackwell-era system.)
+target. The `cu130` index is the actual match for a Blackwell-era system.)
 
 **Status:** verified from PyTorch's published wheel index (https://pytorch.org/get-started/locally/,
 checked 2026-08-12). The `manylinux` wheel tag covers aarch64 with glibc ≥ 2.28.
@@ -162,8 +165,7 @@ checked 2026-08-12). The `manylinux` wheel tag covers aarch64 with glibc ≥ 2.2
 
 bitsandbytes publishes a `manylinux_2_24_aarch64` wheel as of version 0.50.0 (checked
 2026-08-12 on PyPI). The system requirements table on the project page confirms aarch64
-Linux support with NVIDIA GPU (CUDA, SM75+). GB10's Blackwell GPU should be well above
-this floor.
+Linux support with NVIDIA GPU (CUDA, SM75+). GB10's Blackwell GPU is well above this floor.
 
 **Status:** verified from published PyPI wheels. `pip install bitsandbytes` should
 work on the DGX Spark without a source build. Fallback if unavailable: use
