@@ -51,6 +51,15 @@ def _extract_flag_names_from_readme(md_path):
     return set(re.findall(r'--[a-z][a-z0-9-]*', text))
 
 
+# Flags belonging to external tools (llama.cpp) that the README legitimately
+# documents when explaining how to consume the exported .gguf control vectors.
+# These are not part of this repo's CLI and are exempt from the subset checks.
+_EXTERNAL_TOOL_FLAGS = frozenset({
+    "--control-vector",
+    "--control-vector-scaled",
+})
+
+
 def _extract_continuation_paths_from_shell(sh_path):
     """Extract the continuation file paths from the shell script."""
     if not os.path.exists(sh_path):
@@ -89,7 +98,7 @@ class TestFlagConsistency:
         readme_flags = _extract_flag_names_from_readme(
             os.path.join(PROJECT_ROOT, "README.md"))
 
-        unknown = readme_flags - parser_flags
+        unknown = (readme_flags - parser_flags) - _EXTERNAL_TOOL_FLAGS
         assert not unknown, f"README uses flags not in the parser: {unknown}"
 
     def test_no_retired_flags_in_shell(self):

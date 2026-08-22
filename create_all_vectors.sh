@@ -28,23 +28,23 @@ ATTN="${7:-none}"
 
 # Define arrays for continuations and output suffixes
 continuations=(
-    # "$DATA/writing_style_continuations/character_focus.json"
-    # "$DATA/writing_style_continuations/language.json"
-    # "$DATA/writing_style_continuations/storytelling.json"
-    "$DATA/dark_tetrad_continuations/compassion_vs_sadism.json"
-    "$DATA/dark_tetrad_continuations/empathy_vs_sociopathy.json"
-    "$DATA/dark_tetrad_continuations/honesty_vs_machiavellianism.json"
-    "$DATA/dark_tetrad_continuations/humility_vs_narcissism.json"
-    "$DATA/other_continuations/optimism_vs_pessimism.json"
+    "$DATA/writing_style/character_focus.json"
+    "$DATA/writing_style/language.json"
+    "$DATA/writing_style/storytelling.json"
+    "$DATA/dark_tetrad/help_vs_harm.json"
+    "$DATA/dark_tetrad/empathic_vs_callous.json"
+    "$DATA/dark_tetrad/candid_vs_cagey.json"
+    "$DATA/dark_tetrad/humility_vs_narcissism.json"
+    "$DATA/other/optimism_vs_pessimism.json"
 )
 
 output_suffixes=(
-    # "character_focus_"
-    # "language_"
-    # "storytelling_"
-    "compassion_vs_sadism_"
-    "empathy_vs_sociopathy_"
-    "honesty_vs_machiavellianism_"
+    "character_focus_"
+    "language_"
+    "storytelling_"
+    "help_vs_harm_"
+    "empathic_vs_callous_"
+    "candid_vs_cagey_"
     "humility_vs_narcissism_"
     "optimism_vs_pessimism_"
 )

@@ -4,7 +4,6 @@
 
 The Control Vector Generator is a Python program designed to create control vectors for use with [llama.cpp](https://github.com/ggerganov/llama.cpp) via analysis of hidden state activations. Control vectors allow fine-tuned control over language model outputs, enabling more precise and targeted text generation.
 
-See [here](https://huggingface.co/jukofyork/creative-writing-control-vectors-v3.0) to download the latest pre-generated control vectors in [GGUF](https://github.com/ggerganov/ggml/blob/master/docs/gguf.md) format.
 
 ## Table of Contents
 
@@ -26,6 +25,7 @@ See [here](https://huggingface.co/jukofyork/creative-writing-control-vectors-v3.
 
 ```sh
 pip install -r requirements.txt
+pip install -r requirements-flash.txt # for flash-attention
 python create_control_vectors.py --model <model_path> \
     --outpath <output_path> \
     --prompts <prompt_stems> \
@@ -81,7 +81,7 @@ The main script can be executed from the command line with various parameters to
 - `--model`: Absolute or relative path to a **local model directory containing `config.json`**. A bare HuggingFace hub ID will fail with `FileNotFoundError`.
 - `--outpath`: The path prefix to save the output GGUF files to.
 - `--prompts`: The file path for prompt stems (`data/prompt_stems.json`).
-- `--continuations`: The file path for continuations (e.g. `data/dark_tetrad_continuations/compassion_vs_sadism.json`).
+- `--continuations`: The file path for continuations (e.g. `data/dark_tetrad/help_vs_harm.json`).
 - `--writing-prompts-file`: The file path for the newline-delimited creative-writing prompts file (`data/writing_prompts.txt`).
 
 **Sampling:**
@@ -416,7 +416,7 @@ The Cartesian product of these gives us 2500 (ie: 50 x 50) different "You are an
 **A set of 3 different "writing style" axis:**
 
 <details> <summary>"Language" (click to expand)</summary>
-  
+
 ```json
 {
   "classes": ["simple", "ornate"],
@@ -468,7 +468,7 @@ The Cartesian product of these gives us 2500 (ie: 50 x 50) different "You are an
 </details>
 
 <details> <summary>"Storytelling (click to expand)"</summary>
-  
+
 ```json
 {
   "classes": ["explicit", "descriptive"],
@@ -520,7 +520,7 @@ The Cartesian product of these gives us 2500 (ie: 50 x 50) different "You are an
 </details>
 
 <details> <summary>"Character Focus (click to expand)"</summary>
-  
+
 ```json
 {
   "classes": ["narration", "dialogue"],
@@ -574,7 +574,7 @@ The Cartesian product of these gives us 2500 (ie: 50 x 50) different "You are an
 **The 4 elements of the [Dark Tetrad](https://en.wikipedia.org/wiki/Dark_triad)**:
 
 <details> <summary>"Empathy vs Sociopathy (click to expand)"</summary>
-  
+
 ```json
 {
   "classes": ["empathy", "sociopathy"],
@@ -626,7 +626,7 @@ The Cartesian product of these gives us 2500 (ie: 50 x 50) different "You are an
 </details>
 
 <details> <summary>"Honesty vs Machiavellianism (click to expand)"</summary>
-  
+
 ```json
 {
   "classes": ["honesty", "machiavellianism"],
@@ -678,7 +678,7 @@ The Cartesian product of these gives us 2500 (ie: 50 x 50) different "You are an
 </details>
 
 <details> <summary>"Humility vs Narcissism (click to expand)"</summary>
-  
+
 ```json
 {
   "classes": ["humility", "narcissism"],
@@ -730,7 +730,7 @@ The Cartesian product of these gives us 2500 (ie: 50 x 50) different "You are an
 </details>
 
 <details> <summary>"Compassion vs Sadism (click to expand)"</summary>
-  
+
 ```json
 {
   "classes": ["compassion", "sadism"],
@@ -784,7 +784,7 @@ The Cartesian product of these gives us 2500 (ie: 50 x 50) different "You are an
 **An "Optimism vs Nihilism" axis to compliment the [Dark Tetrad](https://en.wikipedia.org/wiki/Dark_triad) axis:**
 
 <details> <summary>"Optimism vs Nihilism (click to expand)"</summary>
-  
+
 ```json
 {
   "classes": ["optimism", "nihilism"],
@@ -846,7 +846,7 @@ The Cartesian product of: 2500 prompt-stem sentences x 10 continuation sentences
 
 - It is important that the same prompt-stem sample sentence be used with each (`"baseline"`, `"negative"`, `"positive"`) triplet.
 - It is also important that the same (prompt-stem, continuation) sample sentence be used with the`"negative"` and `"positive"` members of the same triplet.
-- The suggested value of `"hidden_size"` for the `--num_prompt_samples` option is because the theory regarding [estimation of covariance matrices](https://en.wikipedia.org/wiki/Estimation_of_covariance_matrices) shows we need at the ***very least*** a minimum of [one sample per feature](https://stats.stackexchange.com/questions/90045/how-many-samples-are-needed-to-estimate-a-p-dimensional-covariance-matrix) (this may be overkill due to us only retaining the top Eigenvectors though...).
+- The suggested value of `"hidden_size"` for the `--num-samples` option is because the theory regarding [estimation of covariance matrices](https://en.wikipedia.org/wiki/Estimation_of_covariance_matrices) shows we need at the ***very least*** a minimum of [one sample per feature](https://stats.stackexchange.com/questions/90045/how-many-samples-are-needed-to-estimate-a-p-dimensional-covariance-matrix) (this may be overkill due to us only retaining the top Eigenvectors though...).
 
 ### 5. Create a pair of "differenced datasets" by subtracting the corresponding ```"baseline"``` class's sample from both of the other 2 classes' samples:
 

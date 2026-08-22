@@ -12,6 +12,9 @@
 Thumbs.db
 desktop.ini
 
+# Junk files created by stray control characters in agent-run shell commands
+*[[:cntrl:]]*
+
 # Logs
 *.log
 npm-debug.log*
@@ -47,3 +50,4 @@ env/
 .eggs/
 *.pt
 *.gguf
+CLAUDE.md
